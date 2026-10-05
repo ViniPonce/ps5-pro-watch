@@ -16,8 +16,11 @@ TARGET = "https://www.target.com/p/playstation-5-pro-console/-/A-93620188"
 TARGET_KEY = "9f36aeafbe60771e321a7cc95a78140772ab3e96"
 
 
-def fetch(url, timeout=15):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+def fetch(url, timeout=15, headers=None):
+    req_headers = {"User-Agent": UA}
+    if headers:
+        req_headers.update(headers)
+    req = urllib.request.Request(url, headers=req_headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
             return response.status, response.read().decode("utf-8", "replace")
@@ -147,7 +150,13 @@ def collect():
         f"?key={TARGET_KEY}&tcin=93620188&store_id=3269&zip=33139&state=FL"
         "&pricing_store_id=3269&has_pricing_store_id=true"
     )
-    status, body = fetch(ship_url)
+    status, body = fetch(
+        ship_url,
+        headers={
+            "Accept": "application/json",
+            "Referer": "https://www.target.com/",
+        },
+    )
     if status == 200 and body:
         checked.add("target-ship")
         try:
@@ -178,7 +187,13 @@ def collect():
             "&visitor_id=0183B8C4D5E6F708192A3B4C5D6E7F80&channel=WEB&page=%2Fp%2FA-93620188"
             f"&nearby={zip_code}"
         )
-        status, body = fetch(url)
+        status, body = fetch(
+            url,
+            headers={
+                "Accept": "application/json",
+                "Referer": "https://www.target.com/",
+            },
+        )
         if status != 200 or not body:
             continue
         checked.add("target-store")
