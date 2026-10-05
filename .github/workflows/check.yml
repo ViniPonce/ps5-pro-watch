@@ -1,0 +1,39 @@
+name: PS5 watch
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: ps5-watch
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: ps5-state-${{ github.run_id }}
+          restore-keys: ps5-state-
+
+      - name: Check retailers
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python check.py
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: state.json
+          key: ps5-state-${{ github.run_id }}
