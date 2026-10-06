@@ -1,8 +1,6 @@
 name: PS5 watch
 
 on:
-  schedule:
-    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -16,7 +14,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
 
@@ -30,7 +28,14 @@ jobs:
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_FOR: "90"
         run: python check.py
+
+      - name: Queue the next check
+        if: always() && hashFiles('ended.flag') == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run check.yml --ref main
 
       - uses: actions/cache/save@v4
         if: always()
