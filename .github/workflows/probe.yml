@@ -1,0 +1,20 @@
+name: PS5 probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe retailers once
+        env:
+          DRY: "1"
+          RUN_FOR: "70"
+        run: python check.py
