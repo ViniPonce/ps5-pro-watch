@@ -28,7 +28,7 @@ jobs:
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RUN_FOR: "90"
+          RUN_FOR: "18000"
         run: python check.py
 
       - name: Queue the next check
