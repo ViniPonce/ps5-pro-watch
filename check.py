@@ -384,7 +384,7 @@ def send_report(state):
     if not body:
         return
     print(body)
-    notify(body, "", title="PS5 Pro relatorio", priority="high", tags="clipboard")
+    notify(body, "", title="PS5 Pro relatorio", priority="min", tags="clipboard")
 
 
 def roll_day(state, now_br):
