@@ -2,6 +2,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import urllib.request
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -87,7 +88,10 @@ def notify(body, click):
         headers=headers,
         method="POST",
     )
-    urllib.request.urlopen(req, timeout=20).read()
+    try:
+        urllib.request.urlopen(req, timeout=20).read()
+    except Exception as exc:
+        print(f"notify-failed {type(exc).__name__}")
 
 
 def in_miami(*parts):
@@ -297,27 +301,57 @@ def collect():
     return hits, checked
 
 
-def main():
-    now = datetime.now(ZoneInfo("America/New_York"))
-    if now >= END:
-        if not DRY and TOPIC:
-            notify("O aviso do PS5 Pro parou em 16/11, 20h no horario de Miami.", "")
-        if os.environ.get("GITHUB_ACTIONS") == "true":
-            subprocess.run(["gh", "workflow", "disable", "check.yml"], check=False)
-        print("ended")
-        return 0
+def stop_forever():
+    with open("ended.flag", "w", encoding="utf-8") as handle:
+        handle.write("ended\n")
+    if not DRY and TOPIC:
+        notify("O aviso do PS5 Pro parou em 16/11, 20h no horario de Miami.", "")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        subprocess.run(["gh", "workflow", "disable", "check.yml"], check=False)
+        subprocess.run(["gh", "workflow", "disable", "kick.yml"], check=False)
+    print("ended")
 
+
+def one_check():
     hits, checked = collect()
     previous = load_state()
     present = {hit["id"] for hit in hits}
     kept = {item_id for item_id in previous if source_of(item_id) not in checked}
     fresh = [hit for hit in hits if hit["id"] not in previous]
     save_state(kept | present)
-    print(f"checked={','.join(sorted(checked))} hits={len(hits)} fresh={len(fresh)}")
+    now = datetime.now(ZoneInfo("America/New_York"))
+    print(
+        f"checked={','.join(sorted(checked))} hits={len(hits)} fresh={len(fresh)} at={now.strftime('%H:%M:%S')}"
+    )
     if fresh:
         body = "Compra agora, some em minutos.\n" + "\n".join(hit["text"] for hit in fresh)
         notify(body, fresh[0]["click"])
-    return 0
+
+
+def main():
+    run_for = int(os.environ.get("RUN_FOR", "0"))
+    print(f"run_for={run_for}")
+    deadline = time.time() + run_for
+    while True:
+        if datetime.now(ZoneInfo("America/New_York")) >= END:
+            stop_forever()
+            return 0
+        if run_for > 0 and time.time() >= deadline:
+            print("handoff")
+            return 0
+        started = time.time()
+        one_check()
+        if run_for <= 0:
+            return 0
+        remain = deadline - time.time()
+        if remain < 5:
+            print("handoff")
+            return 0
+        pause = 30 - (time.time() - started)
+        if pause > remain:
+            pause = remain
+        if pause > 1:
+            time.sleep(pause)
 
 
 if __name__ == "__main__":
