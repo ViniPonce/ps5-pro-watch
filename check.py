@@ -90,6 +90,24 @@ def notify(body, click):
     urllib.request.urlopen(req, timeout=20).read()
 
 
+def in_miami(*parts):
+    text = " ".join(parts)
+    if re.search(
+        r"Fort Lauderdale|Hollywood|Davie|Pembroke|Miramar|Pompano|Coral Springs|Boca|Plantation|Sunrise|Weston",
+        text,
+        re.I,
+    ):
+        return False
+    return (
+        re.search(
+            r"Miami|Kendall|Doral|Hialeah|Aventura|Coral Gables|Cutler|Pinecrest|Sweetwater|South Beach|Coconut Grove|Key Biscayne",
+            text,
+            re.I,
+        )
+        is not None
+    )
+
+
 def add_store(hits, seen, loc):
     store_id = str(loc.get("location_id") or "")
     if not store_id or store_id in seen:
@@ -107,6 +125,8 @@ def add_store(hits, seen, loc):
     address = store.get("mailing_address") or nested.get("mailing_address") or {}
     city = address.get("city") or ""
     street = address.get("address_line1") or ""
+    if not in_miami(name, city, street):
+        return
     hits.append(
         {
             "id": f"target-{store_id}",
@@ -179,7 +199,7 @@ def collect():
         except Exception:
             pass
 
-    for zip_code in ("33186", "33172", "33027", "33316"):
+    for zip_code in ("33186", "33172", "33133", "33181"):
         url = (
             "https://redsky.target.com/redsky_aggregations/v1/web/fiats_v1"
             f"?key={TARGET_KEY}&tcin=93620188&store_id=3269&zip={zip_code}&state=FL"
@@ -237,16 +257,13 @@ def collect():
     status, body = fetch("https://www.costco-stock.com/item/1793150/fl", timeout=15)
     if status == 200 and body:
         checked.add("costco")
-        want = re.compile(
-            r"Miami|Kendall|Davie|Pompano|Coral Springs|Pembroke|Boca Raton|Hollywood|Doral|Hialeah|Aventura|Cutler|Fort Lauderdale"
-        )
         for row in re.finditer(
             r'<tr><td>(?P<wh>[^<]+)</td><td class="hide-sm">(?P<city>[^<]+)</td><td><span class="pill pill-(?:in|low)">',
             body,
         ):
             warehouse = row.group("wh")
             city = row.group("city")
-            if not want.search(warehouse + " " + city):
+            if not in_miami(warehouse, city):
                 continue
             link = "https://www.costco.com/p/-/sony-playstation-5-pro-console-bundle/4000352765"
             slug = re.sub(r"[^a-z0-9]+", "-", warehouse.lower()).strip("-")
