@@ -1,0 +1,25 @@
+name: PS5 kick
+
+on:
+  schedule:
+    - cron: "11,41 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  kick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Restart the watch if the chain stopped
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          running=$(gh run list --workflow check.yml --status in_progress --json databaseId --jq "length")
+          waiting=$(gh run list --workflow check.yml --status queued --json databaseId --jq "length")
+          echo "in_progress=$running queued=$waiting"
+          if [ "$running" = "0" ] && [ "$waiting" = "0" ]; then
+            gh workflow run check.yml --ref main
+          fi
