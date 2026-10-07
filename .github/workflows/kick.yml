@@ -16,6 +16,7 @@ jobs:
       - name: Restart the watch if the chain stopped
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           running=$(gh run list --workflow check.yml --status in_progress --json databaseId --jq "length")
           waiting=$(gh run list --workflow check.yml --status queued --json databaseId --jq "length")
