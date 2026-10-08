@@ -325,8 +325,11 @@ def collect():
     if status == 200 and body:
         checked.add("bestbuy")
         if re.search(r"Current status:\s*In Stock", body):
-            price_match = re.search(r"Current price:\s*\$([0-9.]+)", body)
-            price = float(price_match.group(1)) if price_match else 0
+            price_match = re.search(r"Current price:\s*\$(\d+(?:\.\d{1,2})?)", body)
+            try:
+                price = float(price_match.group(1)) if price_match else 0
+            except ValueError:
+                price = 0
             if 0 < price <= MAX_PRICE:
                 link = "https://www.bestbuy.com/product/playstation-5-pro-console/JXHQ37TR86/sku/6601524"
                 hits.append(
