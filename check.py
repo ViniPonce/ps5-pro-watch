@@ -59,9 +59,33 @@ def source_of(item_id):
 def open_status(value):
     if not value:
         return False
-    if re.search(r"OUT_OF_STOCK|UNAVAILABLE|DISCONTINUED|NOT_SOLD", value):
+    text = str(value).upper()
+    if re.search(r"OUT_OF_STOCK|OUTOFSTOCK|UNAVAILABLE|NOT_AVAILABLE|NOT_SOLD|DISCONTINUED|SOLD_OUT", text):
         return False
-    return re.search(r"IN_STOCK|LIMITED|AVAILABLE", value) is not None
+    return re.search(r"IN_STOCK|LIMITED|AVAILABLE", text) is not None
+
+
+def read_price(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    match = re.search(r"\d+(?:\.\d{1,2})?", str(value).replace(",", ""))
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def price_ok(price):
+    return price is None or 0 < price <= MAX_PRICE
+
+
+def page_in_stock(body):
+    match = re.search(r"Current status:\s*(In Stock|Out of Stock)\b", body)
+    return bool(match and match.group(1) == "In Stock")
 
 
 def empty_stats(day):
@@ -151,7 +175,7 @@ def add_store(hits, seen, loc):
     if not store_id or store_id in seen:
         return
     seen.add(store_id)
-    qty = float(loc.get("location_available_to_promise_quantity") or 0)
+    qty = read_price(loc.get("location_available_to_promise_quantity")) or 0
     pickup = ((loc.get("order_pickup") or {}).get("availability_status")) or ""
     floor = ((loc.get("in_store_only") or {}).get("availability_status")) or ""
     ship_store = ((loc.get("ship_to_store") or {}).get("availability_status")) or ""
@@ -190,20 +214,26 @@ def collect():
         checked.add("sony")
         try:
             data = json.loads(body)
-            stock = (data.get("stock") or {}).get("stockLevelStatus")
-            price = float((data.get("price") or {}).get("value") or 0)
-            if stock in ("inStock", "lowStock") and 0 < price <= MAX_PRICE:
+            stock = str((data.get("stock") or {}).get("stockLevelStatus") or "")
+            price = read_price((data.get("price") or {}).get("value"))
+            in_stock = re.search(r"out", stock, re.I) is None and re.search(r"in\s*stock|low\s*stock", stock, re.I)
+            if in_stock and price_ok(price):
                 link = "https://direct.playstation.com/en-us/buy-consoles/playstation5-pro-console-2-tb"
                 hits.append(
                     {
                         "id": "sony-direct",
                         "click": link,
-                        "where": f"PlayStation Direct, US$ {price:.0f}, entrega",
-                        "text": f"PlayStation Direct em estoque por US$ {price:.0f}. Entrega em endereco nos EUA. {link}",
+                        "where": f"PlayStation Direct, US$ {price:.0f}, entrega" if price else "PlayStation Direct, cerca de US$ 899, entrega",
+                        "text": (
+                            f"PlayStation Direct em estoque por US$ {price:.0f}. Entrega em endereco nos EUA. {link}"
+                            if price
+                            else f"PlayStation Direct em estoque, cerca de US$ 899. Entrega em endereco nos EUA. {link}"
+                        ),
                     }
                 )
         except Exception:
-            pass
+            print("store-failed sony")
+            checked.discard("sony")
 
     ship_url = (
         "https://redsky.target.com/redsky_aggregations/v1/web/product_fulfillment_v1"
@@ -223,7 +253,7 @@ def collect():
             fulfillment = json.loads(body)["data"]["product"]["fulfillment"]
             shipping = fulfillment.get("shipping_options") or {}
             ship_state = shipping.get("availability_status") or ""
-            ship_qty = float(shipping.get("available_to_promise_quantity") or 0)
+            ship_qty = read_price(shipping.get("available_to_promise_quantity")) or 0
             if open_status(ship_state) or ship_qty > 0:
                 hits.append(
                     {
@@ -237,8 +267,10 @@ def collect():
                 add_store(hits, seen, loc)
             if fulfillment.get("store_options"):
                 checked.add("target-store")
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"store-failed target {type(exc).__name__}")
+            checked.discard("target-ship")
+            checked.discard("target-store")
 
     for zip_code in ("33186", "33172", "33133", "33181"):
         url = (
@@ -262,8 +294,9 @@ def collect():
             locations = json.loads(body)["data"]["fulfillment_fiats"]["locations"]
             for loc in locations or []:
                 add_store(hits, seen, loc)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"store-failed target-store {type(exc).__name__}")
+            checked.discard("target-store")
 
     status, body = fetch(
         "https://www.walmart.com/ip/Sony-PlayStation-5-Pro-Console-PS5-Pro/18235967161",
@@ -271,75 +304,98 @@ def collect():
     )
     if status == 200 and "sellerDisplayName" in body:
         checked.add("walmart")
-        seller = ""
-        match = re.search(r'sellerDisplayName":"([^"]+)"', body)
-        if match:
-            seller = match.group(1)
-        price = 0.0
-        index = body.find('sellerDisplayName":"Walmart')
-        if index >= 0:
-            window = body[max(0, index - 900) : index + 900]
-            price_match = re.search(r'"price":(8\d\d(?:\.\d+)?|9[0-7]\d(?:\.\d+)?|980(?:\.0+)?)', window)
-            if price_match:
-                price = float(price_match.group(1))
-        if seller.startswith("Walmart") and 0 < price <= MAX_PRICE:
-            link = "https://www.walmart.com/ip/Sony-PlayStation-5-Pro-Console-PS5-Pro/18235967161"
-            hits.append(
-                {
-                    "id": "walmart",
-                    "click": link,
-                    "where": f"Walmart, US$ {price:.2f}, entrega",
-                    "text": (
-                        f"Walmart vendida pela propria Walmart por US$ {price:.2f}. "
-                        f"Pede entrega no checkout. {link}"
-                    ),
-                }
-            )
+        try:
+            seller = ""
+            match = re.search(r'sellerDisplayName":"([^"]+)"', body)
+            if match:
+                seller = match.group(1)
+            price = None
+            index = body.find('sellerDisplayName":"Walmart')
+            if index >= 0:
+                window = body[max(0, index - 900) : index + 900]
+                price_match = re.search(
+                    r'"price":(8\d\d(?:\.\d{1,2})?|9[0-7]\d(?:\.\d{1,2})?|980(?:\.0{1,2})?)',
+                    window,
+                )
+                if price_match:
+                    price = read_price(price_match.group(1))
+            if seller.startswith("Walmart") and price is not None and 0 < price <= MAX_PRICE:
+                link = "https://www.walmart.com/ip/Sony-PlayStation-5-Pro-Console-PS5-Pro/18235967161"
+                hits.append(
+                    {
+                        "id": "walmart",
+                        "click": link,
+                        "where": f"Walmart, US$ {price:.2f}, entrega",
+                        "text": (
+                            f"Walmart vendida pela propria Walmart por US$ {price:.2f}. "
+                            f"Pede entrega no checkout. {link}"
+                        ),
+                    }
+                )
+        except Exception as exc:
+            print(f"store-failed walmart {type(exc).__name__}")
+            checked.discard("walmart")
 
     status, body = fetch("https://www.costco-stock.com/item/1793150/fl", timeout=15)
     if status == 200 and body:
         checked.add("costco")
-        for row in re.finditer(
-            r'<tr><td>(?P<wh>[^<]+)</td><td class="hide-sm">(?P<city>[^<]+)</td><td><span class="pill pill-(?:in|low)">',
-            body,
-        ):
-            warehouse = row.group("wh")
-            city = row.group("city")
-            if not in_miami(warehouse, city):
-                continue
-            link = "https://www.costco.com/p/-/sony-playstation-5-pro-console-bundle/4000352765"
-            slug = re.sub(r"[^a-z0-9]+", "-", warehouse.lower()).strip("-")
-            hits.append(
-                {
-                    "id": f"costco-{slug}",
-                    "click": link,
-                    "where": f"Costco {warehouse} ({city}), cerca de US$ 950",
-                    "text": (
-                        f"Costco {warehouse} ({city}) com o pacote do PS5 Pro, cerca de US$ 950. "
-                        f"Precisa de cadastro. Da para entregar ou retirar. {link}"
-                    ),
-                }
-            )
+        try:
+            for row in re.finditer(
+                r'<tr><td>(?P<wh>[^<]+)</td><td class="hide-sm">(?P<city>[^<]+)</td><td><span class="pill pill-(?:in|low)">',
+                body,
+            ):
+                warehouse = row.group("wh")
+                city = row.group("city")
+                if not in_miami(warehouse, city):
+                    continue
+                link = "https://www.costco.com/p/-/sony-playstation-5-pro-console-bundle/4000352765"
+                slug = re.sub(r"[^a-z0-9]+", "-", warehouse.lower()).strip("-")
+                hits.append(
+                    {
+                        "id": f"costco-{slug}",
+                        "click": link,
+                        "where": f"Costco {warehouse} ({city}), cerca de US$ 950",
+                        "text": (
+                            f"Costco {warehouse} ({city}) com o pacote do PS5 Pro, cerca de US$ 950. "
+                            f"Precisa de cadastro. Da para entregar ou retirar. {link}"
+                        ),
+                    }
+                )
+        except Exception as exc:
+            print(f"store-failed costco {type(exc).__name__}")
+            checked.discard("costco")
 
     status, body = fetch("https://stockmaid.com/skus/6601524", timeout=15)
     if status == 200 and body:
         checked.add("bestbuy")
-        if re.search(r"Current status:\s*In Stock", body):
-            price_match = re.search(r"Current price:\s*\$(\d+(?:\.\d{1,2})?)", body)
-            try:
-                price = float(price_match.group(1)) if price_match else 0
-            except ValueError:
-                price = 0
-            if 0 < price <= MAX_PRICE:
-                link = "https://www.bestbuy.com/product/playstation-5-pro-console/JXHQ37TR86/sku/6601524"
-                hits.append(
-                    {
-                        "id": "bestbuy-online",
-                        "click": link,
-                        "where": f"Best Buy online, US$ {price:.2f}, entrega",
-                        "text": f"Best Buy online em estoque por US$ {price:.2f}. Pede entrega para o endereco deles. {link}",
-                    }
+        try:
+            if page_in_stock(body):
+                price = read_price(
+                    body[body.find("Current price:") : body.find("Current price:") + 40]
+                    if "Current price:" in body
+                    else ""
                 )
+                if price_ok(price):
+                    link = "https://www.bestbuy.com/product/playstation-5-pro-console/JXHQ37TR86/sku/6601524"
+                    hits.append(
+                        {
+                            "id": "bestbuy-online",
+                            "click": link,
+                            "where": (
+                                f"Best Buy online, US$ {price:.2f}, entrega"
+                                if price
+                                else "Best Buy online, cerca de US$ 899.99, entrega"
+                            ),
+                            "text": (
+                                f"Best Buy online em estoque por US$ {price:.2f}. Pede entrega para o endereco deles. {link}"
+                                if price
+                                else f"Best Buy online em estoque, cerca de US$ 899.99. Pede entrega para o endereco deles. {link}"
+                            ),
+                        }
+                    )
+        except Exception as exc:
+            print(f"store-failed bestbuy {type(exc).__name__}")
+            checked.discard("bestbuy")
 
     return hits, checked
 
@@ -458,7 +514,11 @@ def one_check():
     state = load_state()
     roll_day(state, now_br)
     save_state(state)
-    hits, checked = collect()
+    try:
+        hits, checked = collect()
+    except Exception as exc:
+        print(f"collect-failed {type(exc).__name__}")
+        return
     previous = set(state.get("seen") or [])
     present = {hit["id"] for hit in hits}
     kept = {item_id for item_id in previous if source_of(item_id) not in checked}
